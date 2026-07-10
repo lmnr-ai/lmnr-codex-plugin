@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build runtime bundle
+        run: npm run build
+      - name: Assert committed dist/ is up to date
+        run: |
+          if ! git diff --exit-code -- dist/; then
+            echo "::error::dist/hook.cjs is out of date with src/. Run 'npm run build' and commit dist/hook.cjs."
+            exit 1
+          fi
