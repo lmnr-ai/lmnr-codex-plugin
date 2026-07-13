@@ -13,49 +13,48 @@ The hook fails open: if Laminar is unreachable or anything goes wrong, Codex is 
 
 ## Installation
 
-Recommended:
-
 ```bash
 lmnr-cli plugin add codex
 ```
 
-The CLI logs in if needed, lets you pick a Laminar project, mints a project API key, installs the bundled hook under `~/.codex/lmnr/`, and adds a Codex `Stop` hook to `~/.codex/config.toml`.
+The CLI logs you in, lets you pick the Laminar project that should receive your
+Codex traces, mints a project API key, writes it to
+`~/.config/lmnr/codex-plugin.json`, and installs this plugin via Codex's native
+plugin marketplace (`codex plugin marketplace add` + `codex plugin add`). Restart
+Codex to activate it.
 
-Manual install is also possible:
-
-```toml
-# ~/.codex/config.toml
-[features]
-hooks = true
-
-[[hooks.Stop]]
-[[hooks.Stop.hooks]]
-type = "command"
-command = "node /path/to/lmnr-codex-plugin/dist/hook.cjs"
-timeout = 30
-```
-
-Then ensure the Codex environment contains:
+Manual install is equivalent:
 
 ```bash
-export LMNR_PROJECT_API_KEY="<your key>"
+codex plugin marketplace add lmnr-ai/lmnr-codex-plugin
+codex plugin add laminar@laminar
 ```
 
-Older Codex versions can use legacy notify mode:
-
-```toml
-notify = ["node", "/path/to/lmnr-codex-plugin/dist/hook.cjs"]
-```
+This is a native Codex plugin: `.codex-plugin/plugin.json` declares a `Stop`
+hook (`hooks.json`) that runs the committed `dist/hook.cjs`. Codex snapshots the
+plugin into its versioned cache and runs the hook with the plugin dir as the
+working directory, so no absolute paths or launcher shims are needed.
 
 ## Configuration
 
-| Variable | Default | Description |
+The project API key and base URL are read from `~/.config/lmnr/codex-plugin.json`
+(written by `lmnr-cli plugin add codex`):
+
+```json
+{ "projectApiKey": "...", "baseUrl": "https://api.lmnr.ai" }
+```
+
+| Source | Default | Description |
 | --- | --- | --- |
-| `LMNR_PROJECT_API_KEY` / `CODEX_LMNR_PROJECT_API_KEY` | — | Laminar project API key. If unset, the hook exits silently. |
-| `LMNR_BASE_URL` / `CODEX_LMNR_BASE_URL` | `https://api.lmnr.ai` | Laminar API base URL; for self-hosted use e.g. `http://localhost:8000`. |
+| `~/.config/lmnr/codex-plugin.json` `projectApiKey` | — | Laminar project API key. If unset (and no env), the hook exits silently. |
+| `~/.config/lmnr/codex-plugin.json` `baseUrl` | `https://api.lmnr.ai` | Laminar API base URL; for self-hosted use e.g. `http://localhost:8000`. |
 | `LMNR_USER_ID` | `lmnr-cli login` identity, if present | Optional user id. Explicit env wins; otherwise the hook reads `~/.config/lmnr/credentials.json` and prefers `userEmail`, then `userId`. |
 
-Advanced env-only knobs: `CODEX_HOME` changes rollout discovery; `CODEX_LMNR_STATE_DIR` relocates state/lock/log files; `CODEX_LMNR_MAX_CHARS` caps captured text fields (default `20000`); `CODEX_LMNR_DEBUG=1` writes debug logs to `lmnr_hook.log`.
+The env vars `LMNR_PROJECT_API_KEY` / `LMNR_BASE_URL` (or the `CODEX_LMNR_*`
+variants) override the file when set (handy for CI). Advanced env-only knobs:
+`CODEX_HOME` changes rollout discovery; `CODEX_LMNR_STATE_DIR` relocates
+state/lock/log files; `CODEX_LMNR_MAX_CHARS` caps captured text fields (default
+`20000`); `CODEX_LMNR_DEBUG=1` writes debug logs to `lmnr_hook.log`.
 
 ## How it works
 

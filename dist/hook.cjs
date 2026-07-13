@@ -25032,6 +25032,26 @@ function readLoggedInUserId() {
     return null;
   }
 }
+function readAgentPluginConfig() {
+  try {
+    const raw = JSON.parse(
+      fs.readFileSync(path.join(lmnrConfigDir(), "codex-plugin.json"), "utf-8")
+    );
+    if (typeof raw !== "object" || raw === null) {
+      return {};
+    }
+    const out = {};
+    if (typeof raw.projectApiKey === "string" && raw.projectApiKey) {
+      out.projectApiKey = raw.projectApiKey;
+    }
+    if (typeof raw.baseUrl === "string" && raw.baseUrl) {
+      out.baseUrl = raw.baseUrl;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 function codexHome() {
   return opt("CODEX_HOME") || path.join(os.homedir(), ".codex");
 }
@@ -25056,8 +25076,9 @@ function parseMaxChars() {
 var MAX_CHARS = parseMaxChars();
 var EXPORT_TIMEOUT_S = 5;
 function getLaminarConfig() {
-  const apiKey = opt("LMNR_PROJECT_API_KEY") || opt("CODEX_LMNR_PROJECT_API_KEY");
-  const baseUrl = (opt("LMNR_BASE_URL") || opt("CODEX_LMNR_BASE_URL") || "https://api.lmnr.ai").replace(/\/+$/, "");
+  const fileCfg = readAgentPluginConfig();
+  const apiKey = opt("LMNR_PROJECT_API_KEY") || opt("CODEX_LMNR_PROJECT_API_KEY") || fileCfg.projectApiKey || "";
+  const baseUrl = (opt("LMNR_BASE_URL") || opt("CODEX_LMNR_BASE_URL") || fileCfg.baseUrl || "https://api.lmnr.ai").replace(/\/+$/, "");
   const userId = opt("LMNR_USER_ID") || readLoggedInUserId() || null;
   if (!apiKey) {
     return null;
