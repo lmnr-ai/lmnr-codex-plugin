@@ -26046,7 +26046,6 @@ function emitToolSpan(emitter, parentSpan, call, fallbackStart) {
 function buildTraceRootAttributes(config, sessionId, turnNum, sessionState, transcriptPath, turn) {
   const attrs = {
     [`${ASSOC_PREFIX}.session_id`]: sessionId,
-    [`${ASSOC_PREFIX}.tags`]: ["codex"],
     [`${ASSOC_PREFIX}.metadata.source`]: "codex",
     [`${ASSOC_PREFIX}.metadata.os`]: process.platform,
     [`${ASSOC_PREFIX}.metadata.turn_number`]: String(turnNum),
