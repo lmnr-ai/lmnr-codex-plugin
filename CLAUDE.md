@@ -5,7 +5,7 @@ Laminar observability hook for the OpenAI Codex CLI. Parses Codex rollout JSONL 
 ## Layout
 
 - `src/hook.ts` — entrypoint. Reads the hook payload (stdin for the >=0.144 hooks system, last argv arg for legacy `notify`), resolves the session id + rollout path, and runs the emit pipeline. Always exits 0.
-- `src/config.ts` — env-var configuration (`LMNR_*` with `CODEX_LMNR_*` operational fallbacks), zero-config `user_id` from `lmnr-cli login`, state-dir paths, limits.
+- `src/config.ts` — config resolution. The project API key + base URL come from `~/.config/lmnr/codex-plugin.json` (written by `lmnr-cli plugin add codex`); `LMNR_*` / `CODEX_LMNR_*` env vars OVERRIDE the file when set. Zero-config `user_id` from `lmnr-cli login`. State-dir paths, limits.
 - `src/rollout.ts` — rollout JSONL reading: timestamp parsing, incremental byte-offset reads with partial-line buffering, truncation, rollout-path discovery by thread id.
 - `src/codex-events.ts` — Codex raw-row decoder: line typing, content extraction, injected-user-text filtering, tool-call normalization, usage-key normalization, session metadata decoding.
 - `src/turns.ts` — pure state machine grouping decoded Codex events into turns (user message → steps → task_complete/turn_aborted).
@@ -16,6 +16,9 @@ Laminar observability hook for the OpenAI Codex CLI. Parses Codex rollout JSONL 
 - `src/types.ts`, `src/util.ts` — shared types and helpers.
 - `tests/` — `node:test` suites run via tsx (`npm test`).
 - `dist/hook.cjs` — committed esbuild bundle. This is the deployable artifact; rebuild (`npm run build`) and commit it with any `src/` change.
+- `.codex-plugin/plugin.json` — native Codex plugin manifest (`name`/`version`/`description` + `"hooks": "./hooks.json"`). The `hooks` path resolves relative to the plugin **root**, not to `.codex-plugin/`.
+- `hooks.json` — declares the `Stop` command hook. The command is `node "$PLUGIN_ROOT/dist/hook.cjs"` — see the packaging invariant below.
+- `.agents/plugins/marketplace.json` — marketplace manifest (`source: "./"`) so `codex plugin marketplace add <repo|owner/repo|ssh-url>` + `codex plugin add laminar@laminar` install the plugin.
 
 ## Rollout format notes (verified against openai/codex rust-v0.144.0)
 
@@ -30,6 +33,11 @@ Laminar observability hook for the OpenAI Codex CLI. Parses Codex rollout JSONL 
 
 - **Hooks system (>= 0.144):** JSON on stdin with `session_id`, `transcript_path`, `hook_event_name`. Only `Stop`/`SubagentStop` events trigger emission.
 - **Legacy `notify`:** JSON as the final argv argument, kebab-case keys (`thread-id`), no transcript path — the rollout is found by scanning `<CODEX_HOME>/sessions` (depth ≤ 3) for `rollout-*-<threadId>.jsonl`, newest mtime wins.
+
+## Plugin packaging invariants — do not break these
+
+- **The hook command MUST reference the bundle via `$PLUGIN_ROOT`, not a relative path.** Codex runs plugin `Stop` hooks with the working directory set to the **session cwd** (the dir the user launched Codex in), NOT the plugin dir — and provides no substitution token. A relative `node dist/hook.cjs` therefore only works when the user happens to run Codex from a dir containing `dist/hook.cjs`, and silently no-ops (fail-open) everywhere else. Codex sets `PLUGIN_ROOT` (and a `CLAUDE_PLUGIN_ROOT` alias) in the hook's environment to the installed plugin dir, and `type: "command"` hooks run through a shell that expands it — so `node "$PLUGIN_ROOT/dist/hook.cjs"` is the correct, cwd-independent form. Verified end-to-end (a `codex exec` run from an unrelated dir fires the hook and lands a trace).
+- **Install snapshots the whole plugin dir** into `~/.codex/plugins/cache/laminar/laminar/<version>/`; `dist/hook.cjs` must be committed so it rides along. `codex plugin marketplace add owner/repo` clones over **HTTPS** (anonymous) — so a private repo needs an SSH URL until the repo is public.
 
 ## Behavior invariants — do not break these
 
