@@ -15,7 +15,7 @@ import { buildTurns, type Step, type Turn } from "./turns.js";
 import type { Json, Row } from "./types.js";
 import { getLatestTimestamp, jsonDumps } from "./util.js";
 
-// ----------------- Trace naming and tags -----------------
+// ----------------- Trace naming -----------------
 /** Return a compact session label for trace names. */
 export function shortSessionLabel(sessionId: string, maxLen = 12): string {
   const sid = sessionId.trim();
@@ -188,7 +188,6 @@ function buildTraceRootAttributes(
 ): Record<string, Json> {
   const attrs: Record<string, Json> = {
     [`${ASSOC_PREFIX}.session_id`]: sessionId,
-    [`${ASSOC_PREFIX}.tags`]: ["codex"],
     [`${ASSOC_PREFIX}.metadata.source`]: "codex",
     [`${ASSOC_PREFIX}.metadata.os`]: process.platform,
     [`${ASSOC_PREFIX}.metadata.turn_number`]: String(turnNum),
