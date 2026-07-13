@@ -71,7 +71,7 @@ describe("emitTurn span structure", () => {
     assert.ok(root);
     assert.equal(attrs(root)["lmnr.span.type"], "DEFAULT");
     assert.equal(attrs(root)["lmnr.association.properties.session_id"], SESSION_ID);
-    assert.deepEqual(attrs(root)["lmnr.association.properties.tags"], ["codex"]);
+    assert.equal(attrs(root)["lmnr.association.properties.tags"], undefined);
     assert.equal(attrs(root)["lmnr.association.properties.metadata.source"], "codex");
     assert.equal(attrs(root)["lmnr.association.properties.metadata.os"], process.platform);
     assert.equal(attrs(root)["lmnr.association.properties.metadata.cwd"], "/home/dev/project");
@@ -157,8 +157,7 @@ describe("emitTurn span structure", () => {
     assert.equal(typeof root.startTimeUnixNano, "string");
     const wireAttr = (span: any, key: string) => span.attributes.find((a: any) => a.key === key)?.value;
     assert.deepEqual(wireAttr(root, "lmnr.span.type"), { stringValue: "DEFAULT" });
-    const tags = wireAttr(root, "lmnr.association.properties.tags");
-    assert.ok(tags.arrayValue.values.some((v: any) => v.stringValue === "codex"));
+    assert.equal(wireAttr(root, "lmnr.association.properties.tags"), undefined);
     // The OTel JS OTLP/JSON serializer emits intValue as a JSON number; app-server accepts it.
     assert.equal(Number(wireAttr(llm, "gen_ai.usage.input_tokens").intValue), 10);
   });
