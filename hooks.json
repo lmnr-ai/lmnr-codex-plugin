@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "node dist/hook.cjs" } ] }
+    ]
+  }
+}
