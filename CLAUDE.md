@@ -18,7 +18,7 @@ Laminar observability hook for the OpenAI Codex CLI. Parses Codex rollout JSONL 
 - `dist/hook.cjs` — committed esbuild bundle. This is the deployable artifact; rebuild (`npm run build`) and commit it with any `src/` change.
 - `.codex-plugin/plugin.json` — native Codex plugin manifest (`name`/`version`/`description` + `"hooks": "./hooks.json"`). The `hooks` path resolves relative to the plugin **root**, not to `.codex-plugin/`.
 - `hooks.json` — declares the `Stop` command hook. The command is `node "$PLUGIN_ROOT/dist/hook.cjs"` — see the packaging invariant below.
-- `.agents/plugins/marketplace.json` — marketplace manifest (`source: "./"`) so `codex plugin marketplace add <repo|owner/repo|ssh-url>` + `codex plugin add laminar@laminar` install the plugin.
+- `.agents/plugins/marketplace.json` — marketplace manifest (`source: "./"`) so `codex plugin marketplace add <repo|owner/repo|ssh-url>` + `codex plugin add lmnr@lmnr` install the plugin.
 
 ## Rollout format notes (verified against openai/codex rust-v0.144.0)
 
@@ -37,7 +37,7 @@ Laminar observability hook for the OpenAI Codex CLI. Parses Codex rollout JSONL 
 ## Plugin packaging invariants — do not break these
 
 - **The hook command MUST reference the bundle via `$PLUGIN_ROOT`, not a relative path.** Codex runs plugin `Stop` hooks with the working directory set to the **session cwd** (the dir the user launched Codex in), NOT the plugin dir — and provides no substitution token. A relative `node dist/hook.cjs` therefore only works when the user happens to run Codex from a dir containing `dist/hook.cjs`, and silently no-ops (fail-open) everywhere else. Codex sets `PLUGIN_ROOT` (and a `CLAUDE_PLUGIN_ROOT` alias) in the hook's environment to the installed plugin dir, and `type: "command"` hooks run through a shell that expands it — so `node "$PLUGIN_ROOT/dist/hook.cjs"` is the correct, cwd-independent form. Verified end-to-end (a `codex exec` run from an unrelated dir fires the hook and lands a trace).
-- **Install snapshots the whole plugin dir** into `~/.codex/plugins/cache/laminar/laminar/<version>/`; `dist/hook.cjs` must be committed so it rides along. `codex plugin marketplace add owner/repo` clones over **HTTPS** (anonymous) — so a private repo needs an SSH URL until the repo is public.
+- **Install snapshots the whole plugin dir** into `~/.codex/plugins/cache/lmnr/lmnr/<version>/`; `dist/hook.cjs` must be committed so it rides along. `codex plugin marketplace add owner/repo` clones over **HTTPS** (anonymous) — so a private repo needs an SSH URL until the repo is public.
 
 ## Behavior invariants — do not break these
 
