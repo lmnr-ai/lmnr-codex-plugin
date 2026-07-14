@@ -1,6 +1,6 @@
 {
-  "name": "laminar",
+  "name": "lmnr",
   "version": "0.1.0",
-  "description": "Trace OpenAI Codex CLI sessions in Laminar: one trace per turn, with LLM calls and tool executions.",
+  "description": "Trace Codex CLI sessions in Laminar: one trace per turn, with LLM calls and tool executions.",
   "hooks": "./hooks.json"
 }
