@@ -49,6 +49,7 @@ The project API key and base URL are read from `~/.config/lmnr/codex-plugin.json
 | `~/.config/lmnr/codex-plugin.json` `projectApiKey` | — | Laminar project API key. If unset (and no env), the hook exits silently. |
 | `~/.config/lmnr/codex-plugin.json` `baseUrl` | `https://api.lmnr.ai` | Laminar API base URL; for self-hosted use e.g. `http://localhost:8000`. |
 | `LMNR_USER_ID` | `lmnr-cli login` identity, if present | Optional user id. Explicit env wins; otherwise the hook reads `~/.config/lmnr/credentials.json` and prefers `userEmail`, then `userId`. |
+| `LMNR_SPAN_CONTEXT` | — | Optional serialized Laminar span context (from `Laminar.serialize_span_context()` / SDK equivalent). When set, the Codex turn root spans are emitted as children of that span so they join the caller's trace. |
 
 The env vars `LMNR_PROJECT_API_KEY` / `LMNR_BASE_URL` (or the `CODEX_LMNR_*`
 variants) override the file when set (handy for CI). Advanced env-only knobs:
