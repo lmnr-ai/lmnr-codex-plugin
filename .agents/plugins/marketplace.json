@@ -1,7 +1,7 @@
 {
-  "name": "laminar",
-  "owner": { "name": "Laminar", "url": "https://www.lmnr.ai" },
+  "name": "lmnr",
+  "owner": { "name": "Laminar", "url": "https://www.laminar.sh" },
   "plugins": [
-    { "name": "laminar", "source": "./", "description": "Trace OpenAI Codex CLI sessions in Laminar" }
+    { "name": "lmnr", "source": "./", "description": "Trace Codex CLI sessions in Laminar" }
   ]
 }
