@@ -27,13 +27,13 @@ Manual install is equivalent:
 
 ```bash
 codex plugin marketplace add lmnr-ai/lmnr-codex-plugin
-codex plugin add laminar@laminar
+codex plugin add lmnr@lmnr
 ```
 
 This is a native Codex plugin: `.codex-plugin/plugin.json` declares a `Stop`
 hook (`hooks.json`) that runs the committed `dist/hook.cjs`. Codex snapshots the
-plugin into its versioned cache and runs the hook with the plugin dir as the
-working directory, so no absolute paths or launcher shims are needed.
+plugin into its versioned cache and exposes that directory as `$PLUGIN_ROOT` when
+running the hook, so no launcher shims are needed.
 
 ## Configuration
 
