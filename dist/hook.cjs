@@ -25619,7 +25619,6 @@ var SPAN_TYPE_ATTR = "lmnr.span.type";
 var SPAN_INPUT_ATTR = "lmnr.span.input";
 var SPAN_OUTPUT_ATTR = "lmnr.span.output";
 var ASSOC_PREFIX = "lmnr.association.properties";
-var SPAN_CONTEXT_ENV = "LMNR_SPAN_CONTEXT";
 function normalizeTraceId(value) {
   if (typeof value !== "string") {
     return null;
@@ -25659,16 +25658,16 @@ function parseParentSpanContext(raw) {
   };
 }
 function parentContextFromEnv() {
-  const raw = process.env[SPAN_CONTEXT_ENV]?.trim();
+  const raw = process.env.LMNR_SPAN_CONTEXT?.trim();
   if (!raw) {
     return ROOT_CONTEXT;
   }
   const spanContext = parseParentSpanContext(raw);
   if (spanContext === null) {
-    debug(`Ignoring invalid ${SPAN_CONTEXT_ENV}`);
+    debug("Ignoring invalid LMNR_SPAN_CONTEXT");
     return ROOT_CONTEXT;
   }
-  debug(`Using ${SPAN_CONTEXT_ENV} as Codex trace parent`);
+  debug("Using LMNR_SPAN_CONTEXT as Codex trace parent");
   return trace.setSpanContext(ROOT_CONTEXT, spanContext);
 }
 function toOtelAttributes(attrs) {
