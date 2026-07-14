@@ -25619,6 +25619,58 @@ var SPAN_TYPE_ATTR = "lmnr.span.type";
 var SPAN_INPUT_ATTR = "lmnr.span.input";
 var SPAN_OUTPUT_ATTR = "lmnr.span.output";
 var ASSOC_PREFIX = "lmnr.association.properties";
+var PARENT_SPAN_CONTEXT_ENV = "LMNR_PARENT_SPAN_CONTEXT";
+function normalizeTraceId(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const id = value.trim().replace(/-/g, "").toLowerCase();
+  return /^[0-9a-f]{32}$/.test(id) && !/^0+$/.test(id) ? id : null;
+}
+function normalizeSpanId(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const id = value.trim().replace(/-/g, "").toLowerCase();
+  const spanId = id.length === 32 ? id.slice(16) : id;
+  return /^[0-9a-f]{16}$/.test(spanId) && !/^0+$/.test(spanId) ? spanId : null;
+}
+function parseParentSpanContext(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return null;
+  }
+  const record = parsed;
+  const traceId = normalizeTraceId(record.traceId ?? record.trace_id);
+  const spanId = normalizeSpanId(record.spanId ?? record.span_id);
+  if (traceId === null || spanId === null) {
+    return null;
+  }
+  return {
+    traceId,
+    spanId,
+    isRemote: true,
+    traceFlags: typeof record.traceFlags === "number" ? record.traceFlags : TraceFlags.SAMPLED
+  };
+}
+function parentContextFromEnv() {
+  const raw = process.env[PARENT_SPAN_CONTEXT_ENV]?.trim();
+  if (!raw) {
+    return ROOT_CONTEXT;
+  }
+  const spanContext = parseParentSpanContext(raw);
+  if (spanContext === null) {
+    debug(`Ignoring invalid ${PARENT_SPAN_CONTEXT_ENV}`);
+    return ROOT_CONTEXT;
+  }
+  debug(`Using ${PARENT_SPAN_CONTEXT_ENV} as Codex trace parent`);
+  return trace.setSpanContext(ROOT_CONTEXT, spanContext);
+}
 function toOtelAttributes(attrs) {
   const out = {};
   for (const [key, value] of Object.entries(attrs)) {
@@ -25655,9 +25707,11 @@ var TraceEmitter = class {
   config;
   processor;
   tracer;
+  rootParentContext;
   constructor(config) {
     this.config = config;
     this.processor = new CollectingSpanProcessor();
+    this.rootParentContext = parentContextFromEnv();
     const provider = new import_sdk_trace_base.BasicTracerProvider({
       resource: new import_resources.Resource({
         "service.name": "codex",
@@ -25672,7 +25726,7 @@ var TraceEmitter = class {
     return this.processor.spans;
   }
   startSpan(name, startTime, attributes, parent) {
-    const parentCtx = parent ? parent.context : ROOT_CONTEXT;
+    const parentCtx = parent ? parent.context : this.rootParentContext;
     const span = this.tracer.startSpan(
       name,
       { kind: SpanKind.INTERNAL, startTime, attributes: toOtelAttributes(attributes) },

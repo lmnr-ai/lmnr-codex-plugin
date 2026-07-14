@@ -137,6 +137,33 @@ describe("emitTurn span structure", () => {
     assert.equal(attrs(tool)["codex.tool.mcp_tool"], "create_entities");
   });
 
+  it("uses LMNR_PARENT_SPAN_CONTEXT as the parent for Codex turn roots", () => {
+    const parentTraceId = "12345678-1234-5678-9abc-def012345678";
+    const parentSpanId = "00000000-0000-0000-89ab-cdef01234567";
+    process.env.LMNR_PARENT_SPAN_CONTEXT = JSON.stringify({ traceId: parentTraceId, spanId: parentSpanId });
+    try {
+      const emitter = makeEmitter();
+      emitSimpleTurn(emitter, [turnContextLine(), userMessageLine("hi"), assistantMessageLine("hello"), taskCompleteLine()]);
+
+      const byName = spansByName(emitter.spans);
+      const root = byName[`Codex - Turn 1 (5973b6c0)`]!;
+      const llm = byName["LLM Call 1"]!;
+      assert.equal(root.spanContext().traceId, parentTraceId.replace(/-/g, ""));
+      assert.equal(root.parentSpanId, "89abcdef01234567");
+      assert.equal(llm.spanContext().traceId, root.spanContext().traceId);
+      assert.equal(llm.parentSpanId, root.spanContext().spanId);
+
+      const bytes = JsonTraceSerializer.serializeRequest(emitter.spans);
+      const payload = JSON.parse(Buffer.from(bytes!).toString("utf-8"));
+      const wireSpans = payload.resourceSpans[0].scopeSpans[0].spans;
+      const wireRoot = wireSpans.find((s: any) => s.name.startsWith("Codex - Turn 1"));
+      assert.equal(wireRoot.traceId, parentTraceId.replace(/-/g, ""));
+      assert.equal(wireRoot.parentSpanId, "89abcdef01234567");
+    } finally {
+      delete process.env.LMNR_PARENT_SPAN_CONTEXT;
+    }
+  });
+
   it("wire format: valid hex ids and OTLP JSON envelope", () => {
     const emitter = makeEmitter();
     emitSimpleTurn(emitter, [turnContextLine(), userMessageLine("hi"), assistantMessageLine("hello"), tokenCountLine({ input_tokens: 10, output_tokens: 3 }), taskCompleteLine()]);

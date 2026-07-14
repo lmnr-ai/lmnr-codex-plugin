@@ -2,11 +2,13 @@ import {
   ROOT_CONTEXT,
   SpanKind,
   SpanStatusCode,
+  TraceFlags,
   trace,
   type Attributes,
   type AttributeValue,
   type Context,
   type Span,
+  type SpanContext,
 } from "@opentelemetry/api";
 import { ExportResultCode, type ExportResult } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
@@ -22,6 +24,63 @@ export const SPAN_TYPE_ATTR = "lmnr.span.type";
 export const SPAN_INPUT_ATTR = "lmnr.span.input";
 export const SPAN_OUTPUT_ATTR = "lmnr.span.output";
 export const ASSOC_PREFIX = "lmnr.association.properties";
+
+const PARENT_SPAN_CONTEXT_ENV = "LMNR_PARENT_SPAN_CONTEXT";
+
+function normalizeTraceId(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const id = value.trim().replace(/-/g, "").toLowerCase();
+  return /^[0-9a-f]{32}$/.test(id) && !/^0+$/.test(id) ? id : null;
+}
+
+function normalizeSpanId(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const id = value.trim().replace(/-/g, "").toLowerCase();
+  const spanId = id.length === 32 ? id.slice(16) : id;
+  return /^[0-9a-f]{16}$/.test(spanId) && !/^0+$/.test(spanId) ? spanId : null;
+}
+
+function parseParentSpanContext(raw: string): SpanContext | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return null;
+  }
+  const record = parsed as Record<string, unknown>;
+  const traceId = normalizeTraceId(record.traceId ?? record.trace_id);
+  const spanId = normalizeSpanId(record.spanId ?? record.span_id);
+  if (traceId === null || spanId === null) {
+    return null;
+  }
+  return {
+    traceId,
+    spanId,
+    isRemote: true,
+    traceFlags: typeof record.traceFlags === "number" ? record.traceFlags : TraceFlags.SAMPLED,
+  };
+}
+
+function parentContextFromEnv(): Context {
+  const raw = process.env[PARENT_SPAN_CONTEXT_ENV]?.trim();
+  if (!raw) {
+    return ROOT_CONTEXT;
+  }
+  const spanContext = parseParentSpanContext(raw);
+  if (spanContext === null) {
+    debug(`Ignoring invalid ${PARENT_SPAN_CONTEXT_ENV}`);
+    return ROOT_CONTEXT;
+  }
+  debug(`Using ${PARENT_SPAN_CONTEXT_ENV} as Codex trace parent`);
+  return trace.setSpanContext(ROOT_CONTEXT, spanContext);
+}
 
 /** Convert loosely-typed attributes to OTel attributes, dropping unsupported values. */
 function toOtelAttributes(attrs: Record<string, Json>): Attributes {
@@ -65,10 +124,12 @@ export class TraceEmitter {
   readonly config: LaminarConfig;
   private readonly processor: CollectingSpanProcessor;
   private readonly tracer;
+  private readonly rootParentContext: Context;
 
   constructor(config: LaminarConfig) {
     this.config = config;
     this.processor = new CollectingSpanProcessor();
+    this.rootParentContext = parentContextFromEnv();
     const provider = new BasicTracerProvider({
       resource: new Resource({
         "service.name": "codex",
@@ -85,7 +146,7 @@ export class TraceEmitter {
   }
 
   startSpan(name: string, startTime: Date, attributes: Record<string, Json>, parent: SpanHandle | null): SpanHandle {
-    const parentCtx = parent ? parent.context : ROOT_CONTEXT;
+    const parentCtx = parent ? parent.context : this.rootParentContext;
     const span = this.tracer.startSpan(
       name,
       { kind: SpanKind.INTERNAL, startTime, attributes: toOtelAttributes(attributes) },
