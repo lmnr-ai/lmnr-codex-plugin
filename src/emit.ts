@@ -221,6 +221,8 @@ export function emitTurn(
   transcriptPath: string,
   sessionState: SessionState
 ): void {
+  // Every span minted below inherits session/user association from the emitter.
+  emitter.sessionId = sessionId;
   const [userText] = truncateText(turn.userText);
   const [finalAssistantText] = truncateText(turn.lastAssistantText);
 

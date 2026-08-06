@@ -48,6 +48,30 @@ function emitSimpleTurn(emitter: TraceEmitter, rows: any[], state = new SessionS
 }
 
 describe("emitTurn span structure", () => {
+  it("stamps session and user association on every span, not just the root", () => {
+    const emitter = makeEmitter("user-1");
+    emitSimpleTurn(emitter, [
+      turnContextLine("gpt-5.2-codex"),
+      userMessageLine("list files"),
+      functionCallLine("shell", { command: ["ls"] }, "call_1"),
+      functionCallOutputLine("call_1", "file1"),
+      assistantMessageLine("one file"),
+      tokenCountLine({ input_tokens: 10, output_tokens: 5 }),
+      taskCompleteLine(),
+    ]);
+
+    // Span-level queries in Laminar read association off the span itself, so a
+    // root-only stamp makes "LLM spans for session X" match nothing.
+    assert.ok(emitter.spans.length >= 3, `expected several spans, got ${emitter.spans.length}`);
+    for (const span of emitter.spans) {
+      const a = attrs(span);
+      assert.equal(a["lmnr.association.properties.session_id"], SESSION_ID, `${span.name} carries the session id`);
+      assert.equal(a["lmnr.association.properties.user_id"], "user-1", `${span.name} carries the user id`);
+    }
+    const types = new Set(emitter.spans.map((s) => attrs(s)["lmnr.span.type"]));
+    assert.ok(types.has("LLM") && types.has("TOOL"), `covers LLM and TOOL spans, saw ${[...types].join(",")}`);
+  });
+
   it("root + LLM + tool spans with Laminar attributes", () => {
     const emitter = makeEmitter("user-1");
     const state = new SessionState({ meta: { threadId: SESSION_ID, cwd: "/home/dev/project", branch: "main", cliVersion: "0.144.0" } });
