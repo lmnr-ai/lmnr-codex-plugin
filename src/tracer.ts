@@ -12,6 +12,7 @@ import {
 } from "@opentelemetry/api";
 import { ExportResultCode, type ExportResult } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { JsonTraceSerializer } from "@opentelemetry/otlp-transformer";
 import { Resource } from "@opentelemetry/resources";
 import { BasicTracerProvider, type ReadableSpan, type SpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { EXPORT_TIMEOUT_S, type LaminarConfig } from "./config.js";
@@ -102,7 +103,7 @@ function toOtelAttributes(attrs: Record<string, Json>): Attributes {
   return out;
 }
 
-/** Collects finished spans in memory so we can export them in one request. */
+/** Collects finished spans in memory for export in size-bounded batches. */
 class CollectingSpanProcessor implements SpanProcessor {
   readonly spans: ReadableSpan[] = [];
   onStart(): void {}
@@ -214,8 +215,31 @@ export function startSpan(emitter: TraceEmitter, args: StartSpanArgs): SpanHandl
   return emitter.startSpan(args.name, args.startTime ?? new Date(), attrs, args.parent);
 }
 
-/** Export the emitter's finished spans in one OTLP/HTTP/JSON request; true on 2xx. */
-async function exportSpans(emitter: TraceEmitter): Promise<boolean> {
+// Leave headroom below the self-hosted app-server's default 5 MiB limit.
+const EXPORT_BATCH_BYTES = 1024 * 1024;
+
+/** Measure the actual OTLP JSON envelope, including UTF-8 and escaping. */
+function* exportBatches(spans: ReadableSpan[]): Generator<ReadableSpan[]> {
+  const bytes = JsonTraceSerializer.serializeRequest(spans);
+  if (bytes === undefined) {
+    throw new Error("Could not serialize OTLP spans");
+  }
+  if (bytes.byteLength <= EXPORT_BATCH_BYTES || spans.length === 1) {
+    // A span cannot be split without changing its meaning. Send an oversized
+    // span alone and let the server decide whether to accept it.
+    if (bytes.byteLength > EXPORT_BATCH_BYTES) {
+      info(`Single OTLP span exceeds batch target: ${bytes.byteLength} bytes`);
+    }
+    yield spans;
+    return;
+  }
+  const middle = Math.floor(spans.length / 2);
+  yield* exportBatches(spans.slice(0, middle));
+  yield* exportBatches(spans.slice(middle));
+}
+
+/** True only after every batch succeeds; callers retain state on any failure. */
+async function exportSpans(emitter: TraceEmitter, deadline: number): Promise<boolean> {
   const spans = emitter.spans;
   if (spans.length === 0) {
     return true;
@@ -226,15 +250,23 @@ async function exportSpans(emitter: TraceEmitter): Promise<boolean> {
     timeoutMillis: Math.round(EXPORT_TIMEOUT_S * 1000),
   });
   try {
-    const result = await new Promise<ExportResult>((resolve) => {
-      exporter.export(spans, resolve);
-    });
-    if (result.code === ExportResultCode.SUCCESS) {
-      debug(`OTLP export: ${spans.length} span(s)`);
-      return true;
+    for (const batch of exportBatches(spans)) {
+      // The hard timeout may already have returned to the caller. Do not start
+      // further requests after it, even if an in-flight export later succeeds.
+      if (Date.now() >= deadline) {
+        info("OTLP export deadline reached; remaining batches will be retried");
+        return false;
+      }
+      const result = await new Promise<ExportResult>((resolve) => {
+        exporter.export(batch, resolve);
+      });
+      if (result.code !== ExportResultCode.SUCCESS) {
+        info(`OTLP export failed: ${result.error ?? "unknown error"}`);
+        return false;
+      }
+      debug(`OTLP export: ${batch.length} span(s)`);
     }
-    info(`OTLP export failed: ${result.error ?? "unknown error"}`);
-    return false;
+    return true;
   } catch (e) {
     info(`OTLP export failed: ${e}`);
     return false;
@@ -253,12 +285,13 @@ async function exportSpans(emitter: TraceEmitter): Promise<boolean> {
  */
 export async function exportWithTimeout(emitter: TraceEmitter): Promise<boolean> {
   const timeoutMs = Math.round((EXPORT_TIMEOUT_S + 1) * 1000);
+  const deadline = Date.now() + timeoutMs;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<boolean>((resolve) => {
     timer = setTimeout(() => resolve(false), timeoutMs);
   });
   try {
-    return await Promise.race([exportSpans(emitter), timeout]);
+    return await Promise.race([exportSpans(emitter, deadline), timeout]);
   } finally {
     if (timer) {
       clearTimeout(timer);
