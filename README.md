@@ -62,7 +62,8 @@ state/lock/log files; `CODEX_LMNR_MAX_CHARS` caps captured text fields (default
 - Codex writes rollouts under `~/.codex/sessions/YYYY/MM/DD/`.
 - The hook incrementally reads appended bytes, decodes raw Codex rows into normalized events, assembles turns, and exports spans to `{LMNR_BASE_URL}/v1/traces` using OTLP/HTTP JSON.
 - Span timestamps are backdated to rollout timestamps.
-- Export is at-least-once: offsets advance only after successful export, so transient failures retry and may duplicate rather than lose traces.
+- OTLP requests are split at span boundaries using their serialized JSON byte size, targeting at most 1 MiB per request. An individually oversized span is sent alone; a server rejection is logged and retains the pending state. The existing hook export deadline still applies to the entire batch sequence.
+- Export is at-least-once: offsets advance only after every batch exports successfully, so transient failures retry and may duplicate rather than lose traces.
 - Trailing incomplete turns are retried briefly, then held or emitted if they already contain renderable model output.
 
 ## Development

@@ -25592,6 +25592,7 @@ async function withStateLock(fn) {
 init_esm();
 var import_core3 = __toESM(require_src(), 1);
 var import_exporter_trace_otlp_http = __toESM(require_src5(), 1);
+var import_otlp_transformer = __toESM(require_src4(), 1);
 var import_resources = __toESM(require_src2(), 1);
 var import_sdk_trace_base = __toESM(require_src6(), 1);
 
@@ -25776,7 +25777,24 @@ function startSpan(emitter, args) {
   }
   return emitter.startSpan(args.name, args.startTime ?? /* @__PURE__ */ new Date(), attrs, args.parent);
 }
-async function exportSpans(emitter) {
+var EXPORT_BATCH_BYTES = 1024 * 1024;
+function* exportBatches(spans) {
+  const bytes = import_otlp_transformer.JsonTraceSerializer.serializeRequest(spans);
+  if (bytes === void 0) {
+    throw new Error("Could not serialize OTLP spans");
+  }
+  if (bytes.byteLength <= EXPORT_BATCH_BYTES || spans.length === 1) {
+    if (bytes.byteLength > EXPORT_BATCH_BYTES) {
+      info(`Single OTLP span exceeds batch target: ${bytes.byteLength} bytes`);
+    }
+    yield spans;
+    return;
+  }
+  const middle = Math.floor(spans.length / 2);
+  yield* exportBatches(spans.slice(0, middle));
+  yield* exportBatches(spans.slice(middle));
+}
+async function exportSpans(emitter, deadline) {
   const spans = emitter.spans;
   if (spans.length === 0) {
     return true;
@@ -25787,15 +25805,21 @@ async function exportSpans(emitter) {
     timeoutMillis: Math.round(EXPORT_TIMEOUT_S * 1e3)
   });
   try {
-    const result = await new Promise((resolve2) => {
-      exporter.export(spans, resolve2);
-    });
-    if (result.code === import_core3.ExportResultCode.SUCCESS) {
-      debug(`OTLP export: ${spans.length} span(s)`);
-      return true;
+    for (const batch of exportBatches(spans)) {
+      if (Date.now() >= deadline) {
+        info("OTLP export deadline reached; remaining batches will be retried");
+        return false;
+      }
+      const result = await new Promise((resolve2) => {
+        exporter.export(batch, resolve2);
+      });
+      if (result.code !== import_core3.ExportResultCode.SUCCESS) {
+        info(`OTLP export failed: ${result.error ?? "unknown error"}`);
+        return false;
+      }
+      debug(`OTLP export: ${batch.length} span(s)`);
     }
-    info(`OTLP export failed: ${result.error ?? "unknown error"}`);
-    return false;
+    return true;
   } catch (e) {
     info(`OTLP export failed: ${e}`);
     return false;
@@ -25808,12 +25832,13 @@ async function exportSpans(emitter) {
 }
 async function exportWithTimeout(emitter) {
   const timeoutMs = Math.round((EXPORT_TIMEOUT_S + 1) * 1e3);
+  const deadline = Date.now() + timeoutMs;
   let timer;
   const timeout = new Promise((resolve2) => {
     timer = setTimeout(() => resolve2(false), timeoutMs);
   });
   try {
-    return await Promise.race([exportSpans(emitter), timeout]);
+    return await Promise.race([exportSpans(emitter, deadline), timeout]);
   } finally {
     if (timer) {
       clearTimeout(timer);
