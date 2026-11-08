@@ -29,8 +29,9 @@ export function shortSessionLabel(sessionId: string, maxLen = 12): string {
   return sid.length <= maxLen ? sid : sid.slice(0, maxLen).replace(/-+$/, "");
 }
 
-function traceDisplayName(sessionId: string, turnNum: number): string {
-  return `Codex - Turn ${turnNum} (${shortSessionLabel(sessionId)})`;
+function traceDisplayName(sessionId: string, turnNum: number, agentPath?: string): string {
+  // Subagents spawned together share a UUIDv7 prefix, so name them by agent path.
+  return `Codex - Turn ${turnNum} (${agentPath ?? shortSessionLabel(sessionId)})`;
 }
 
 // ----------------- MCP tool name parsing -----------------
@@ -187,7 +188,9 @@ function buildTraceRootAttributes(
   turn: Turn
 ): Record<string, Json> {
   const attrs: Record<string, Json> = {
-    [`${ASSOC_PREFIX}.session_id`]: sessionId,
+    // Subagents join their root agent's session so a multi-agent run reads as one.
+    [`${ASSOC_PREFIX}.session_id`]:
+      sessionState.meta.parentThreadId && sessionState.meta.sessionId ? sessionState.meta.sessionId : sessionId,
     [`${ASSOC_PREFIX}.metadata.source`]: "codex",
     [`${ASSOC_PREFIX}.metadata.os`]: process.platform,
     [`${ASSOC_PREFIX}.metadata.turn_number`]: String(turnNum),
@@ -209,6 +212,13 @@ function buildTraceRootAttributes(
   if (meta.cliVersion) {
     attrs[`${ASSOC_PREFIX}.metadata.codex_cli_version`] = meta.cliVersion;
   }
+  if (meta.parentThreadId) {
+    attrs[`${ASSOC_PREFIX}.metadata.thread_id`] = sessionId;
+    attrs[`${ASSOC_PREFIX}.metadata.parent_thread_id`] = meta.parentThreadId;
+  }
+  if (meta.agentPath) {
+    attrs[`${ASSOC_PREFIX}.metadata.agent_path`] = meta.agentPath;
+  }
   return attrs;
 }
 
@@ -228,7 +238,7 @@ export function emitTurn(
   const turnEndTs = parseTimestamp(turn.endTimestamp);
 
   const rootSpan = startSpan(emitter, {
-    name: traceDisplayName(sessionId, turnNum),
+    name: traceDisplayName(sessionId, turnNum, sessionState.meta.agentPath),
     parent: null,
     startTime: userTs,
     spanType: "DEFAULT",
@@ -314,6 +324,20 @@ export function getNewTurnsFromRollout(
 ): [Turn[], SessionState] {
   let rows: Row[];
   [rows, sessionState] = readNewJsonl(transcriptPath, sessionState);
+  // A forked subagent's rollout starts with its own session_meta, then a copy of
+  // the parent's history; its own events begin at subagent_history_start_ordinal.
+  // Skip the copy so the parent's turns are not exported again.
+  const first = rows[0];
+  const ordinal = first?.type === "session_meta" ? first.payload?.subagent_history_start_ordinal : undefined;
+  if (typeof ordinal === "number" && ordinal > 1) {
+    if (rows.length < ordinal) {
+      // The copy is not fully written yet; re-read from the start next time.
+      sessionState.offset = 0;
+      sessionState.buffer = "";
+      return [[], sessionState];
+    }
+    rows = [first, ...rows.slice(ordinal)];
+  }
   let events = decodeCodexRows(rows);
   // Replay an incomplete trailing turn held from a prior run (chronologically
   // oldest), then let it flow through the normal pipeline.

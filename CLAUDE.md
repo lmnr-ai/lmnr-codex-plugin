@@ -24,6 +24,9 @@ Laminar observability hook for the OpenAI Codex CLI. Parses Codex rollout JSONL 
 
 - Every line is `{"timestamp","type","payload"}`. Types: `session_meta`, `turn_context` (carries model), `response_item`, `event_msg`, `compacted`.
 - `response_item` subtypes: `message`, `reasoning`, `function_call` (its `arguments` is a raw JSON **string** — double-parse), `function_call_output`, `local_shell_call`, `custom_tool_call`/`_output`, `web_search_call`.
+- Multi-agent v2 (`features.multi_agent_v2`, verified on rust-v0.167.0): agents exchange `response_item` `agent_message` rows (`author`/`recipient` agent paths such as `/root` and `/root/<task>`), each preceded by an `inter_agent_communication_metadata` row whose `trigger_turn` says whether the message starts a turn. A subagent spawned with `fork_turns="none"` has no user message; its task is the `trigger_turn: true` message, so that message opens the turn. Messages with `trigger_turn: false` (progress, follow-ups, final answers) arrive while a turn runs and are skipped.
+- A forked subagent (`fork_turns="all"`) rollout starts with its own `session_meta`, then a copy of the parent's history; `subagent_history_start_ordinal` on that first line is the index of its first own line. The copied lines are skipped so the parent's turns are not exported twice; if the copy is not fully written yet, the read is discarded and retried from the start.
+- Subagent `session_meta` carries `parent_thread_id`, `agent_path` and the root's `session_id`; subagent turns use that `session_id` so the agent tree shares one Laminar session, and are named by agent path (subagents spawned together share a UUIDv7 prefix).
 - Turn boundaries come from `event_msg` payloads: `task_started`, `task_complete` (carries `last_agent_message`), `turn_aborted`.
 - `token_count` events carry `info.last_token_usage`; `input_tokens` already INCLUDES cached tokens (OpenAI convention), so `llm.usage.total_tokens = input + output` — do not add `cache_read` again.
 - Forked sessions copy history, so a rollout can contain multiple `session_meta` lines: **first one wins** (`captureSessionMeta`).
@@ -53,7 +56,7 @@ Laminar observability hook for the OpenAI Codex CLI. Parses Codex rollout JSONL 
 
 - `LMNR_USER_ID` wins for attribution; otherwise `src/config.ts` reads `lmnr-cli login` credentials from `~/.config/lmnr/credentials.json` (or XDG/APPDATA equivalent), preferring `userEmail` then `userId`. Never read the Codex/OpenAI account.
 - `LMNR_SPAN_CONTEXT` may carry a serialized Laminar span context from a caller (`Laminar.serialize_span_context()` / SDK equivalent). When present and valid, Codex turn root spans use it as their remote parent, joining the caller's trace; when absent/invalid, standalone trace behavior is preserved.
-- `lmnr.association.properties.*` (session_id, user_id, metadata.*) go on the ROOT span only — the app-server propagates them trace-wide. Metadata is reserved for trace-constant values (`source`, `os`, `codex_cli_version`, `cwd`, `git_branch`, turn labels). Per-tool/per-generation detail must NOT use that prefix (it would leak onto every span); use plain attrs like `codex.tool.name` or `gen_ai.*` instead. No tags are emitted, matching the Claude Code plugin and SDK convention.
+- `lmnr.association.properties.*` (session_id, user_id, metadata.*) go on the ROOT span only — the app-server propagates them trace-wide. Metadata is reserved for trace-constant values (`source`, `os`, `codex_cli_version`, `cwd`, `git_branch`, turn labels, and `thread_id`/`parent_thread_id`/`agent_path` on subagent turns). Per-tool/per-generation detail must NOT use that prefix (it would leak onto every span); use plain attrs like `codex.tool.name` or `gen_ai.*` instead. No tags are emitted, matching the Claude Code plugin and SDK convention.
 - `lmnr.span.type` values: `DEFAULT`, `LLM`, `TOOL`. Inputs/outputs go in `lmnr.span.input` / `lmnr.span.output` as JSON strings.
 - `gen_ai.output.messages` uses the OTel GenAI semconv `{role, parts}` shape (`thinking`/`text`/`tool_call` parts) — NOT the OpenAI chat shape. Reasoning must render distinctly, and the frontend's `OpenAIAssistantMessageSchema` silently strips unknown keys, so a bare `reasoning` field on a chat-shaped message would be invisible. Input messages stay chat-shaped (`{role, content}`); the frontend parses input/output attrs independently.
 - Spans are backdated to rollout timestamps via explicit `startTime`/`endTime`.
@@ -62,7 +65,7 @@ Laminar observability hook for the OpenAI Codex CLI. Parses Codex rollout JSONL 
 
 ## Testing
 
-- `npm test` (32 tests), `npm run typecheck`.
+- `npm test` (39 tests), `npm run typecheck`.
 - CI runs `npm ci`, typecheck, tests, build, then `git diff --exit-code -- dist/` to catch committed bundle drift.
 - `emitNewTurnsFromRollout` takes an injectable `exportFn` so tests exercise the full pipeline without a network; `CODEX_LMNR_STATE_DIR` redirects state for test/e2e isolation.
 - For e2e against the local stack: craft a synthetic rollout under a fake `CODEX_HOME`, invoke `dist/hook.cjs` with a legacy-notify argv payload, then verify spans in ClickHouse (`spans`, and `traces_replacing` — ReplacingMergeTree, query with `FINAL`).

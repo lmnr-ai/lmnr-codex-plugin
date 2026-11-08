@@ -14,6 +14,7 @@ import { readNewJsonl } from "../src/rollout.js";
 import { getSessionState, SessionState } from "../src/state.js";
 import { buildTurns } from "../src/turns.js";
 import {
+  agentMessageLines,
   assistantMessageLine,
   functionCallLine,
   functionCallOutputLine,
@@ -84,6 +85,45 @@ describe("buildTurns", () => {
     ]);
     assert.equal(turns.length, 1);
     assert.equal(turns[0]!.userText, "real prompt");
+  });
+
+  it("starts a subagent turn on an agent_message that triggers a turn", () => {
+    const { turns } = buildTurnsFromRows([
+      turnContextLine(),
+      userMessageLine("<environment_context>\ncwd: /x\n</environment_context>"),
+      ...agentMessageLines("/root", "/root/worker", "Message Type: NEW_TASK\nrun the check", true),
+      assistantMessageLine("checking"),
+      // A parent's follow-up while the subagent works does not start a turn.
+      ...agentMessageLines("/root", "/root/worker", "Message Type: MESSAGE\nalso check y", false),
+      assistantMessageLine("done"),
+      taskCompleteLine("done"),
+    ]);
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0]!.userText, "Message Type: NEW_TASK\nrun the check");
+    assert.equal(turns[0]!.steps.length, 1);
+  });
+
+  it("starts a turn on a task from a peer agent", () => {
+    const { turns } = buildTurnsFromRows([
+      turnContextLine(),
+      ...agentMessageLines("/root/a", "/root/b", "Message Type: NEW_TASK\nreview this", true),
+      assistantMessageLine("reviewed"),
+      taskCompleteLine(),
+    ]);
+    assert.equal(turns.length, 1);
+  });
+
+  it("keeps a parent turn whole when a subagent reports back", () => {
+    const { turns } = buildTurnsFromRows([
+      turnContextLine(),
+      userMessageLine("delegate the check"),
+      assistantMessageLine("spawning"),
+      ...agentMessageLines("/root/worker", "/root", "Message Type: FINAL_ANSWER\nok", false),
+      assistantMessageLine("worker says ok"),
+      taskCompleteLine(),
+    ]);
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0]!.userText, "delegate the check");
   });
 
   it("skips event_msg duplicates of user/assistant messages", () => {
@@ -263,6 +303,43 @@ describe("incremental rollout reading", () => {
     assert.equal(turns[0].lastAssistantText, "a1");
     assert.equal(state.pendingTurnEvents.length, 0);
     assert.equal(state.buffer, "");
+  });
+
+  it("skips the parent history copied into a forked subagent rollout", () => {
+    const own = [
+      line("event_msg", { type: "task_started", turn_id: "child-turn" }),
+      turnContextLine(),
+      ...agentMessageLines("/root", "/root/worker", "Message Type: NEW_TASK\nchild task", true),
+      assistantMessageLine("child answer"),
+      taskCompleteLine("child answer"),
+    ];
+    const copied = [
+      sessionMetaLine(),
+      turnContextLine(),
+      userMessageLine("parent prompt"),
+      assistantMessageLine("parent answer"),
+      taskCompleteLine(),
+      userMessageLine("parent second prompt"),
+    ];
+    const file = writeRollout([
+      sessionMetaLine({ id: "child", parent_thread_id: "parent", subagent_history_start_ordinal: 1 + copied.length }),
+      ...copied,
+      ...own,
+    ]);
+    const [turns] = getNewTurnsFromRollout(file, new SessionState());
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0].userText, "Message Type: NEW_TASK\nchild task");
+  });
+
+  it("re-reads a forked subagent rollout whose copied history is not fully written", () => {
+    const file = writeRollout([
+      sessionMetaLine({ id: "child", parent_thread_id: "parent", subagent_history_start_ordinal: 5 }),
+      turnContextLine(),
+      userMessageLine("parent prompt"),
+    ]);
+    const [turns, state] = getNewTurnsFromRollout(file, new SessionState());
+    assert.equal(turns.length, 0);
+    assert.equal(state.offset, 0);
   });
 
   it("holds an incomplete trailing turn and replays it on the next run", () => {

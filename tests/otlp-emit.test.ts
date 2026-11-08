@@ -48,6 +48,19 @@ function emitSimpleTurn(emitter: TraceEmitter, rows: any[], state = new SessionS
 }
 
 describe("emitTurn span structure", () => {
+  it("puts a subagent turn in its root agent's session", () => {
+    const emitter = makeEmitter();
+    const state = new SessionState({
+      meta: { threadId: SESSION_ID, sessionId: "root-session", parentThreadId: "parent-thread", agentPath: "/root/worker" },
+    });
+    emitSimpleTurn(emitter, [turnContextLine(), userMessageLine("task"), assistantMessageLine("ok"), taskCompleteLine()], state);
+    const root = spansByName(emitter.spans)[`Codex - Turn 1 (/root/worker)`]!;
+    assert.equal(attrs(root)["lmnr.association.properties.session_id"], "root-session");
+    assert.equal(attrs(root)["lmnr.association.properties.metadata.thread_id"], SESSION_ID);
+    assert.equal(attrs(root)["lmnr.association.properties.metadata.parent_thread_id"], "parent-thread");
+    assert.equal(attrs(root)["lmnr.association.properties.metadata.agent_path"], "/root/worker");
+  });
+
   it("root + LLM + tool spans with Laminar attributes", () => {
     const emitter = makeEmitter("user-1");
     const state = new SessionState({ meta: { threadId: SESSION_ID, cwd: "/home/dev/project", branch: "main", cliVersion: "0.144.0" } });

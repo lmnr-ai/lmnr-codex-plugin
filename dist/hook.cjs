@@ -25157,11 +25157,13 @@ function decodeSessionMeta(row, payload) {
       branch: typeof git === "object" && git !== null && typeof git.branch === "string" ? git.branch : void 0,
       cliVersion: typeof payload.cli_version === "string" ? payload.cli_version : void 0,
       originator: typeof payload.originator === "string" ? payload.originator : void 0,
-      parentThreadId: typeof payload.parent_thread_id === "string" ? payload.parent_thread_id : void 0
+      parentThreadId: typeof payload.parent_thread_id === "string" ? payload.parent_thread_id : void 0,
+      sessionId: typeof payload.session_id === "string" ? payload.session_id : void 0,
+      agentPath: typeof payload.agent_path === "string" ? payload.agent_path : void 0
     }
   };
 }
-function decodeResponseItem(row, payload) {
+function decodeResponseItem(row, payload, triggersTurn) {
   const timestamp = row.timestamp;
   switch (payload.type) {
     case "message": {
@@ -25174,6 +25176,8 @@ function decodeResponseItem(row, payload) {
       }
       return null;
     }
+    case "agent_message":
+      return triggersTurn ? { kind: "user_message", text: extractTextFromContent(payload.content), timestamp } : null;
     case "reasoning": {
       const text = extractTextFromContent(payload.content) || extractTextFromContent(payload.summary);
       return { kind: "reasoning", text, timestamp };
@@ -25248,7 +25252,7 @@ function decodeEventMsg(row, payload) {
       return null;
   }
 }
-function decodeCodexRow(row) {
+function decodeCodexRow(row, triggersTurn = false) {
   if (typeof row !== "object" || row === null) {
     return null;
   }
@@ -25262,7 +25266,7 @@ function decodeCodexRow(row) {
       return typeof model === "string" && model ? { kind: "turn_context", model, timestamp: row.timestamp } : null;
     }
     case "response_item":
-      return decodeResponseItem(row, payload);
+      return decodeResponseItem(row, payload, triggersTurn);
     case "event_msg":
       return decodeEventMsg(row, payload);
     default:
@@ -25271,11 +25275,13 @@ function decodeCodexRow(row) {
 }
 function decodeCodexRows(rows) {
   const events = [];
+  let triggersTurn = false;
   for (const row of rows) {
-    const event = decodeCodexRow(row);
+    const event = decodeCodexRow(row, triggersTurn);
     if (event !== null) {
       events.push(event);
     }
+    triggersTurn = typeof row === "object" && row !== null && getLineType(row) === "inter_agent_communication_metadata" && getPayload(row).trigger_turn === true;
   }
   return events;
 }
@@ -26003,8 +26009,8 @@ function shortSessionLabel(sessionId, maxLen = 12) {
   }
   return sid.length <= maxLen ? sid : sid.slice(0, maxLen).replace(/-+$/, "");
 }
-function traceDisplayName(sessionId, turnNum) {
-  return `Codex - Turn ${turnNum} (${shortSessionLabel(sessionId)})`;
+function traceDisplayName(sessionId, turnNum, agentPath) {
+  return `Codex - Turn ${turnNum} (${agentPath ?? shortSessionLabel(sessionId)})`;
 }
 function parseMcpToolName(name) {
   if (!name.startsWith("mcp__")) {
@@ -26119,7 +26125,8 @@ function emitToolSpan(emitter, parentSpan, call, fallbackStart) {
 }
 function buildTraceRootAttributes(config, sessionId, turnNum, sessionState, transcriptPath, turn) {
   const attrs = {
-    [`${ASSOC_PREFIX}.session_id`]: sessionId,
+    // Subagents join their root agent's session so a multi-agent run reads as one.
+    [`${ASSOC_PREFIX}.session_id`]: sessionState.meta.parentThreadId && sessionState.meta.sessionId ? sessionState.meta.sessionId : sessionId,
     [`${ASSOC_PREFIX}.metadata.source`]: "codex",
     [`${ASSOC_PREFIX}.metadata.os`]: process.platform,
     [`${ASSOC_PREFIX}.metadata.turn_number`]: String(turnNum),
@@ -26141,6 +26148,13 @@ function buildTraceRootAttributes(config, sessionId, turnNum, sessionState, tran
   if (meta.cliVersion) {
     attrs[`${ASSOC_PREFIX}.metadata.codex_cli_version`] = meta.cliVersion;
   }
+  if (meta.parentThreadId) {
+    attrs[`${ASSOC_PREFIX}.metadata.thread_id`] = sessionId;
+    attrs[`${ASSOC_PREFIX}.metadata.parent_thread_id`] = meta.parentThreadId;
+  }
+  if (meta.agentPath) {
+    attrs[`${ASSOC_PREFIX}.metadata.agent_path`] = meta.agentPath;
+  }
   return attrs;
 }
 function emitTurn(emitter, config, sessionId, turnNum, turn, transcriptPath, sessionState) {
@@ -26149,7 +26163,7 @@ function emitTurn(emitter, config, sessionId, turnNum, turn, transcriptPath, ses
   const userTs = parseTimestamp(turn.userTimestamp);
   const turnEndTs = parseTimestamp(turn.endTimestamp);
   const rootSpan = startSpan(emitter, {
-    name: traceDisplayName(sessionId, turnNum),
+    name: traceDisplayName(sessionId, turnNum, sessionState.meta.agentPath),
     parent: null,
     startTime: userTs,
     spanType: "DEFAULT",
@@ -26210,6 +26224,16 @@ function captureSessionMeta(events, sessionState) {
 function getNewTurnsFromRollout(transcriptPath, sessionState, flushIncompleteTurns = false) {
   let rows;
   [rows, sessionState] = readNewJsonl(transcriptPath, sessionState);
+  const first = rows[0];
+  const ordinal = first?.type === "session_meta" ? first.payload?.subagent_history_start_ordinal : void 0;
+  if (typeof ordinal === "number" && ordinal > 1) {
+    if (rows.length < ordinal) {
+      sessionState.offset = 0;
+      sessionState.buffer = "";
+      return [[], sessionState];
+    }
+    rows = [first, ...rows.slice(ordinal)];
+  }
   let events = decodeCodexRows(rows);
   if (sessionState.pendingTurnEvents.length > 0) {
     events = [...sessionState.pendingTurnEvents, ...events];
