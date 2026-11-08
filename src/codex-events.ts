@@ -7,6 +7,10 @@ export interface SessionMetaInfo {
   cliVersion?: string;
   originator?: string;
   parentThreadId?: string;
+  /** Root session of a multi-agent tree; equals threadId for the root agent. */
+  sessionId?: string;
+  /** Multi-agent v2 path of a subagent, e.g. "/root/worker". */
+  agentPath?: string;
 }
 
 export interface ToolCall {
@@ -116,11 +120,13 @@ function decodeSessionMeta(row: Row, payload: Row): CodexEvent {
       cliVersion: typeof payload.cli_version === "string" ? payload.cli_version : undefined,
       originator: typeof payload.originator === "string" ? payload.originator : undefined,
       parentThreadId: typeof payload.parent_thread_id === "string" ? payload.parent_thread_id : undefined,
+      sessionId: typeof payload.session_id === "string" ? payload.session_id : undefined,
+      agentPath: typeof payload.agent_path === "string" ? payload.agent_path : undefined,
     },
   };
 }
 
-function decodeResponseItem(row: Row, payload: Row): CodexEvent | null {
+function decodeResponseItem(row: Row, payload: Row, triggersTurn: boolean): CodexEvent | null {
   const timestamp = row.timestamp;
   switch (payload.type) {
     case "message": {
@@ -133,6 +139,11 @@ function decodeResponseItem(row: Row, payload: Row): CodexEvent | null {
       }
       return null;
     }
+    case "agent_message":
+      // multi_agent_v2 delivers a subagent's task as an agent_message; the
+      // preceding inter_agent_communication_metadata row says whether it starts
+      // a turn. Other agent messages arrive while a turn is already running.
+      return triggersTurn ? { kind: "user_message", text: extractTextFromContent(payload.content), timestamp } : null;
     case "reasoning": {
       const text = extractTextFromContent(payload.content) || extractTextFromContent(payload.summary);
       return { kind: "reasoning", text, timestamp };
@@ -211,7 +222,7 @@ function decodeEventMsg(row: Row, payload: Row): CodexEvent | null {
   }
 }
 
-export function decodeCodexRow(row: Row): CodexEvent | null {
+export function decodeCodexRow(row: Row, triggersTurn = false): CodexEvent | null {
   if (typeof row !== "object" || row === null) {
     return null;
   }
@@ -225,7 +236,7 @@ export function decodeCodexRow(row: Row): CodexEvent | null {
       return typeof model === "string" && model ? { kind: "turn_context", model, timestamp: row.timestamp } : null;
     }
     case "response_item":
-      return decodeResponseItem(row, payload);
+      return decodeResponseItem(row, payload, triggersTurn);
     case "event_msg":
       return decodeEventMsg(row, payload);
     default:
@@ -236,11 +247,17 @@ export function decodeCodexRow(row: Row): CodexEvent | null {
 
 export function decodeCodexRows(rows: Row[]): CodexEvent[] {
   const events: CodexEvent[] = [];
+  let triggersTurn = false;
   for (const row of rows) {
-    const event = decodeCodexRow(row);
+    const event = decodeCodexRow(row, triggersTurn);
     if (event !== null) {
       events.push(event);
     }
+    triggersTurn =
+      typeof row === "object" &&
+      row !== null &&
+      getLineType(row) === "inter_agent_communication_metadata" &&
+      getPayload(row).trigger_turn === true;
   }
   return events;
 }

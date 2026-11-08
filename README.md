@@ -7,7 +7,7 @@ Each trace contains:
 - a root span with the user prompt and final assistant answer
 - one LLM span per model step, with model name, GenAI messages, and token usage
 - one tool span per shell/MCP/web/custom tool call
-- session grouping by Codex thread id
+- session grouping by Codex thread id; multi-agent v2 subagents join their root agent's session
 
 The hook fails open: if Laminar is unreachable or anything goes wrong, Codex is not blocked.
 

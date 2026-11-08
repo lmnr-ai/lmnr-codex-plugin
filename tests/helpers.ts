@@ -32,6 +32,14 @@ export function userMessageLine(text: string, ts?: string): Row {
   return line("response_item", { type: "message", role: "user", content: [{ type: "input_text", text }] }, ts);
 }
 
+/** A multi-agent v2 message as Codex writes it: a metadata row, then the agent_message. */
+export function agentMessageLines(author: string, recipient: string, text: string, triggerTurn: boolean): Row[] {
+  return [
+    line("inter_agent_communication_metadata", { trigger_turn: triggerTurn }),
+    line("response_item", { type: "agent_message", author, recipient, content: [{ type: "input_text", text }] }),
+  ];
+}
+
 export function assistantMessageLine(text: string, ts?: string): Row {
   return line("response_item", { type: "message", role: "assistant", content: [{ type: "output_text", text }] }, ts);
 }
